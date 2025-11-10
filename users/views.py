@@ -67,8 +67,8 @@ def login_view(request):
             return redirect("users:login")
 
     # GET: render with the current hp_name
-    return render(request, "users/login.html", {"hp_name": hp_name})
-
+    next_url = request.GET.get("next", "")
+    return render(request, "users/login.html", {"hp_name": hp_name, "next": next_url})
 
 def register(request):
     if request.method == "POST":
