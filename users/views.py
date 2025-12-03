@@ -7,9 +7,25 @@ from django.http import HttpResponseRedirect
 from django.urls import reverse
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from .forms import UserRegistrationForm, EmailAuthenticationForm
+from .models import Transaction
+from .forms import TopUpForm, UserRegistrationForm, EmailAuthenticationForm
 
 RECAPTCHA_VERIFY_URL = "https://www.google.com/recaptcha/api/siteverify"
+
+@login_required
+def top_up(request):
+    form = TopUpForm(request.POST)
+    if form.is_valid():
+        amount = form.cleaned_data['amount']
+        profile = request.user.profile
+        profile.balance += amount
+        profile.save()
+        Transaction.objects.create(user=request.user, amount=amount)
+        messages.success(request, f"Your balance has been topped up by ${amount}.")
+        return redirect('chipin:home')
+    else:
+        form = TopUpForm()
+        return render(request, 'users/top_up.html', {'form': form})
 
 def _hp_name(request):
     # stable per-session honeypot name to defeat autofill/scripts

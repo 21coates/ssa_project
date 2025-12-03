@@ -1,4 +1,6 @@
 from django import forms
+from .models import Group
+from django import forms
 from .models import Group, Comment
 
 class CommentForm(forms.ModelForm):
@@ -14,7 +16,6 @@ class CommentForm(forms.ModelForm):
         if "<script>" in content.lower():  # Prevent XSS by checking for script tags
             raise forms.ValidationError("Invalid content.")
         return content
-
 
 class GroupCreationForm(forms.ModelForm):
     class Meta:

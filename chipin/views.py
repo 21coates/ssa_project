@@ -2,10 +2,37 @@ from django.contrib.auth.decorators import login_required
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.contrib.auth.models import User
-from .models import Group
-from .forms import GroupCreationForm, CommentForm
-from .models import GroupJoinRequest, Comment
+from .forms import GroupCreationForm
 from .models import Event
+from .models import Group, GroupJoinRequest, Comment
+from .forms import GroupCreationForm, CommentForm
+from decimal import Decimal
+from django.db import transaction
+from django.db.models import F
+from django.utils import timezone
+from users.models import Transaction
+
+
+@login_required
+def edit_comment(request, comment_id):
+    comment = get_object_or_404(Comment, id=comment_id)
+    if comment.user != request.user:  # Ensure only the comment author can edit
+        return redirect('chipin:group_detail', group_id=comment.group.id)
+    if request.method == 'POST':
+        form = CommentForm(request.POST, instance=comment)
+        if form.is_valid():
+            form.save()
+            return redirect('chipin:group_detail', group_id=comment.group.id)
+    else:
+        form = CommentForm(instance=comment)
+    return render(request, 'chipin/edit_comment.html', {'form': form, 'comment': comment})
+
+@login_required
+def delete_comment(request, comment_id):
+    comment = get_object_or_404(Comment, id=comment_id)
+    if comment.user == request.user or request.user == comment.group.admin:  # Allow author or group admin to delete
+        comment.delete()
+    return redirect('chipin:group_detail', group_id=comment.group.id)
 
 @login_required
 def group_detail(request, group_id, edit_comment_id=None):
@@ -54,6 +81,7 @@ def group_detail(request, group_id, edit_comment_id=None):
         'event_share_info': event_share_info,
     })
 
+
 @login_required
 def create_event(request, group_id):
     group = get_object_or_404(Group, id=group_id)
@@ -73,6 +101,7 @@ def create_event(request, group_id):
         messages.success(request, f'Event "{event_name}" created successfully!')
         return redirect('chipin:group_detail', group_id=group.id)
     return render(request, 'chipin/create_event.html', {'group': group})
+
 
 @login_required
 def join_event(request, group_id, event_id):
@@ -94,6 +123,7 @@ def join_event(request, group_id, event_id):
     event.check_status()
     event.save()
     return redirect('chipin:group_detail', group_id=group.id)
+
 
 
 @login_required
@@ -151,76 +181,7 @@ def delete_event(request, group_id, event_id):
     event.delete()
     messages.success(request, f"The event '{event.name}' has been deleted.")
     return redirect('chipin:group_detail', group_id=group.id)
-
-
-@login_required
-def home(request):
-    user = request.user
-    pending_invitations = user.pending_invitations.all() # Get pending group invitations for the current user
-    user_groups = user.group_memberships.all()  # Get groups the user is a member of
-    user_join_requests = GroupJoinRequest.objects.filter(user=user)  # Get join requests sent by the user
-    available_groups = Group.objects.exclude(members=user).exclude(join_requests__user=user) # Get groups the user is not a member of and the user has not requested to join
-    context = {
-        'pending_invitations': pending_invitations,
-        'user_groups': user_groups,
-        'user_join_requests': user_join_requests,
-        'available_groups': available_groups
-    }
-    return render(request, 'chipin/home.html', context)
-
-
-@login_required
-def group_detail(request, group_id, edit_comment_id=None):
-    group = get_object_or_404(Group, id=group_id)
-    comments = group.comments.all().order_by('-created_at')  # Fetch all comments for the group
-    if edit_comment_id: # Fetch the comment to edit, if edit_comment_id is provided
-        comment_to_edit = get_object_or_404(Comment, id=edit_comment_id)
-        if comment_to_edit.user != request.user:
-            return redirect('chipin:group_detail', group_id=group.id)
-    else:
-        comment_to_edit = None
-    if request.method == 'POST':
-        if comment_to_edit: # Editing an existing comment
-            form = CommentForm(request.POST, instance=comment_to_edit)
-        else: # Adding a new comment
-            form = CommentForm(request.POST)
-        if form.is_valid():
-            comment = form.save(commit=False)
-            comment.user = request.user
-            comment.group = group
-            comment.save()
-            return redirect('chipin:group_detail', group_id=group.id)
-    else:
-        form = CommentForm(instance=comment_to_edit) if comment_to_edit else CommentForm()
-    return render(request, 'chipin/group_detail.html', {
-        'group': group,
-        'comments': comments,
-        'form': form,
-        'comment_to_edit': comment_to_edit,
-    })
-
-
-@login_required
-def edit_comment(request, comment_id):
-    comment = get_object_or_404(Comment, id=comment_id)
-    if comment.user != request.user:  # Ensure only the comment author can edit
-        return redirect('chipin:group_detail', group_id=comment.group.id)
-    if request.method == 'POST':
-        form = CommentForm(request.POST, instance=comment)
-        if form.is_valid():
-            form.save()
-            return redirect('chipin:group_detail', group_id=comment.group.id)
-    else:
-        form = CommentForm(instance=comment)
-    return render(request, 'chipin/edit_comment.html', {'form': form, 'comment': comment})
-
-@login_required
-def delete_comment(request, comment_id):
-    comment = get_object_or_404(Comment, id=comment_id)
-    if comment.user == request.user or request.user == comment.group.admin:  # Allow author or group admin to delete
-        comment.delete()
-    return redirect('chipin:group_detail', group_id=comment.group.id)
-
+    
 @login_required
 def vote_on_join_request(request, group_id, request_id, vote):
     group = get_object_or_404(Group, id=group_id)
@@ -271,33 +232,32 @@ def delete_join_request(request, request_id):
         messages.error(request, "You are not authorised to delete this join request.")
     return redirect('chipin:home')  
 
-@login_required
-def leave_group(request, group_id):
-    group = get_object_or_404(Group, id=group_id)
-    # Check if the user is a member of the group
-    if request.user in group.members.all():
-        group.members.remove(request.user)  # Remove the user from the group
-        messages.success(request, f'You have left the group {group.name}.')
-    else:
-        messages.error(request, 'You are not a member of this group.') 
-    return redirect('chipin:home')  
 
 @login_required
 def home(request):
-    # Get all groups where the user has been invited but not accepted the invite
-    pending_invitations = Group.objects.filter(invited_users=request.user)
     
-    # Get all join requests submitted by the current user
-    user_join_requests = GroupJoinRequest.objects.filter(user=request.user)
+    user = request.user
+    pending_invitations = user.pending_invitations.all() # Get pending group invitations for the current user
+    user_groups = user.group_memberships.all() # Get groups the user is a member of
+    user_join_requests = GroupJoinRequest.objects.filter(user=user) # Get join requests sent by the user
+    profile = request.user.profile
+    available_groups = Group.objects.exclude(members=user).exclude(join_requests__user=user) # Get groups the user is not a member of and the user has not requested to join
+    transactions = Transaction.objects.filter( # Get all transactions for the logged-in user, newest first
+        user=request.user
+    ).order_by('-created_at')
+    context = {
+        'pending_invitations': pending_invitations,
+        'user_groups': user_groups,
+        'user_join_requests': user_join_requests,
+        'available_groups': available_groups,
+        'balance': profile.balance,
+        'transactions': transactions,
+    }   
+    return render(request, 'chipin/home.html', context )
 
-    # Get all groups where the user is NOT a member
-    available_groups = Group.objects.exclude(members=request.user)
+    
 
-    return render(request, 'chipin/home.html', { # Pass data to the template
-        'pending_invitations': pending_invitations, 
-        'user_join_requests': user_join_requests, 
-        'available_groups': available_groups  
-    })
+
 
 @login_required
 def create_group(request):
@@ -311,12 +271,7 @@ def create_group(request):
         form = GroupCreationForm(user=request.user)
     return render(request, 'chipin/create_group.html', {'form': form})
 
-@login_required
-def group_detail(request, group_id):
-    group = get_object_or_404(Group, id=group_id)
-    return render(request, 'chipin/group_detail.html', {'group': group})
 
-@login_required
 def delete_group(request, group_id):
     group = get_object_or_404(Group, id=group_id)
     if request.user == group.admin:
@@ -367,6 +322,13 @@ def accept_invite(request, group_id):
 @login_required
 def leave_group(request, group_id):
     group = get_object_or_404(Group, id=group_id)
+    # Check if the user is a member of the group
+    if request.user in group.members.all():
+        group.members.remove(request.user)  # Remove the user from the group
+        messages.success(request, f'You have left the group {group.name}.')
+    else:
+        messages.error(request, 'You are not a member of this group.') 
+    
 
     if request.user not in group.members.all():
         messages.error(request, "You’re not a member of this group.")
@@ -379,3 +341,85 @@ def leave_group(request, group_id):
     group.members.remove(request.user)
     messages.success(request, f'You left "{group.name}".')
     return redirect("chipin:home")
+
+@login_required 
+def transfer_funds(request, group_id, event_id):
+    event = get_object_or_404(Event, id=event_id, group__id=group_id)
+    group = event.group
+    if request.user != group.admin:
+        messages.error(request, "Only the group admin can transfer funds.")
+        return redirect('chipin:group_detail', group_id=group_id)
+    if event.status == Event.Status.ARCHIVED:
+        messages.error(request, "Funds have already been transferred for this event.")
+        return redirect('chipin:group_detail', group_id=group_id)
+    payers_qs = event.members.select_related("profile")
+    if not payers_qs.exists():
+        payers_qs = group.members.select_related("profile")
+    payers = list(payers_qs)
+    # Include admin
+    include_admin_in_payers = True
+    if include_admin_in_payers and group.admin not in payers:
+        payers.append(group.admin)
+    if not payers:
+        messages.error(request, "No payers found for this event.")
+        return redirect('chipin:group_detail', group_id=group_id)
+    rough_eligible = [u for u in payers if u.profile.balance > 0]
+    if not rough_eligible:
+        messages.error(request, "No members have a positive balance to contribute.")
+        return redirect('chipin:group_detail', group_id=group_id)
+    if request.method != "POST":
+        messages.error(request, "Invalid request method for transferring funds.")
+        return redirect('chipin:group_detail', group_id=group_id)
+    # Recalculate share using roughly eligible members
+    share = event.total_spend / Decimal(len(rough_eligible))
+    # Second pass: final eligibility check
+    final_payers = []
+    excluded = []
+    for u in rough_eligible:
+        if u.profile.balance >= share:
+            final_payers.append(u)
+        else:
+            excluded.append(u)
+    if not final_payers:
+        messages.error(
+            request,
+            "No participants could afford the share amount. Transfer cancelled."
+        )
+        return redirect('chipin:group_detail', group_id=group_id)
+    final_share = event.total_spend / Decimal(len(final_payers))
+
+    with transaction.atomic():
+        # Debit the final eligible payers
+        for u in final_payers:
+            u.profile.balance = F("balance") - final_share
+            u.profile.save(update_fields=["balance"])
+            Transaction.objects.create(
+                user=u,
+                amount=-final_share,
+                created_at=timezone.now(),
+                description=f"Contribution for event '{event.name}'"
+            )
+        # Credit admin with the *full* event spend
+        admin_profile = group.admin.profile
+        admin_profile.balance = F("balance") + event.total_spend
+        admin_profile.save(update_fields=["balance"])
+        Transaction.objects.create(
+            user=group.admin,
+            amount=event.total_spend,
+            created_at=timezone.now(),
+            description=f"Funds received for event '{event.name}'"
+        )
+        # Archive event
+        event.status = Event.Status.ARCHIVED
+        event.archived_at = timezone.now()
+        event.save(update_fields=["status", "archived_at"])
+        msg = (
+        f"Transferred ${event.total_spend} "
+        f"(${final_share:.2f} each) "
+        f"from {len(final_payers)} payer(s)."
+    )
+    if excluded:
+        excluded_names = ", ".join(u.username for u in excluded)
+        msg += f" Excluded due to insufficient balance: {excluded_names}."
+    messages.success(request, msg)
+    return redirect('chipin:group_detail', group_id=group_id)

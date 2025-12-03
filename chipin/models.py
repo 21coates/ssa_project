@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
+from django.utils import timezone
 
 class Group(models.Model):
     name = models.CharField(max_length=100)
@@ -8,6 +9,7 @@ class Group(models.Model):
     invited_users = models.ManyToManyField(User, related_name='pending_invitations', blank=True)
     def __str__(self):
         return self.name
+    
     
 class GroupJoinRequest(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
@@ -49,3 +51,36 @@ class Event(models.Model):
                 return False
         self.status = 'Active'
         return True
+    class Status(models.TextChoices):
+        PENDING  = "Pending",  "Pending"
+        ACTIVE   = "Active",   "Active"
+        ARCHIVED = "Archived", "Archived"    
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+    archived_at = models.DateTimeField(null=True, blank=True)
+    def calculate_share(self):
+        members_count = self.group.members.count()
+        return 0 if members_count == 0 else self.total_spend / members_count
+    def check_status(self, save=True):
+        if self.status == self.Status.ARCHIVED:
+            return self.status
+        share = self.calculate_share()
+        for member in self.group.members.all():
+            if member.profile.max_spend < share:
+                self.status = self.Status.PENDING
+                if save:
+                    self.save(update_fields=["status"])
+                return self.status
+        self.status = self.Status.ACTIVE
+        if save:
+            self.save(update_fields=["status"])
+        return self.status
+    def archive(self, save=True):
+        self.status = self.Status.ARCHIVED
+        self.archived_at = timezone.now()
+        if save:
+            self.save(update_fields=["status", "archived_at"])
