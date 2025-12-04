@@ -13,7 +13,7 @@ class CommentForm(forms.ModelForm):
     # Clean the content to sanitise inputs
     def clean_content(self):
         content = self.cleaned_data.get('content')
-        if "<script>" in content.lower():  # Prevent XSS by checking for script tags
+        if "<script>" in content.lower():  # Prevent XSS by checking for script tagsss
             raise forms.ValidationError("Invalid content.")
         return content
 
