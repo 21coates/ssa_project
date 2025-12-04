@@ -16,7 +16,7 @@ class CommentForm(forms.ModelForm):
         if "<script>" in content.lower():  # Prevent XSS by checking for script tagsss
             raise forms.ValidationError("Invalid content.")
         return content
-
+#guys can we just focus
 class GroupCreationForm(forms.ModelForm):
     class Meta:
         model = Group
