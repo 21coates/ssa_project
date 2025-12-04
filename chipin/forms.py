@@ -10,7 +10,7 @@ class CommentForm(forms.ModelForm):
         widgets = {
             'content': forms.Textarea(attrs={'rows': 3, 'placeholder': 'Enter your comment...'})
         }
-    # Clean the content to sanitise input
+    # Clean the content to sanitise inputs
     def clean_content(self):
         content = self.cleaned_data.get('content')
         if "<script>" in content.lower():  # Prevent XSS by checking for script tags
